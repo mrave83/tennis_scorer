@@ -125,7 +125,7 @@
 var SHOT_TYPES = {
   ace:    { label: "ACE",             color: "#4ade80" },
   winner: { label: "WINNER",          color: "#facc15" },
-  ue:     { label: "UNFORCED ERROR",  color: "#f87171" },
+  ue:     { label: "UNFORCED ERROR", color: "#f87171", sub: "errore suo" },
   fault:  { label: "FAULT",           color: "#c084fc" },
   df:     { label: "DOUBLE FAULT",    color: "#fb923c" },
 };
@@ -170,17 +170,20 @@ function scorePoint(state, actor, shotType, stroke) {
   }
   if (shotType === "df") {
     s.faultPending = false;
-    pushLog(s, actor, "df", opp, false, null);
+    pushLog(s, actor, "df", opp, false, null, actor);
     return awardPoint(s, opp);
   }
   var pointWinner = shotType === "ue" ? opp : actor;
   var isFirst = !s.faultPending;
   s.faultPending = false;
-  pushLog(s, s.server, shotType, pointWinner, isFirst, stroke || null);
+  pushLog(s, s.server, shotType, pointWinner, isFirst, stroke || null, actor);
   return awardPoint(s, pointWinner);
 }
-function pushLog(s, server, shotType, pointWinner, isFirst, stroke) {
-  s.log.push({ server: server, isFirst: isFirst, shotType: shotType, stroke: stroke || null, pointWinner: pointWinner, setN: s.currentSet, games: s.games.slice(), points: s.points.slice() });
+function pushLog(s, server, shotType, pointWinner, isFirst, stroke, actor) {
+  // actor = who pressed the button (who physically hit the ball for winner/UE)
+  // for df: actor = server (who double-faulted)
+  var hitter = (actor !== undefined) ? actor : server;
+  s.log.push({ server: server, isFirst: isFirst, shotType: shotType, stroke: stroke || null, pointWinner: pointWinner, hitter: hitter, setN: s.currentSet, games: s.games.slice(), points: s.points.slice() });
 }
 function awardPoint(s, winner) {
   if (s.isSuperTiebreak) return superTBPoint(s, winner);
@@ -279,14 +282,14 @@ function computeStats(log) {
       add(srv,"firstServes"); add(srv,"firstIn"); add(ret,"returnPlayed");
       if (e.pointWinner===srv) add(srv,"firstWon"); else { add(srv,"firstLost"); add(ret,"returnWon"); }
       if (e.shotType==="ace")    add(srv,"aces");
-      if (e.shotType==="winner") add(srv,"winners");
-      if (e.shotType==="ue")     add(srv,"ue");
+      if (e.shotType==="winner") add(e.hitter,"winners");  // winner → chi ha colpito
+      if (e.shotType==="ue")     add(e.hitter,"ue");       // UE → chi ha sbagliato (hitter = actor who pressed UE)
     } else {
       add(srv,"firstServes"); add(srv,"secondServes"); add(srv,"secondIn"); add(ret,"returnPlayed");
       if (e.pointWinner===srv) add(srv,"secondWon"); else { add(srv,"secondLost"); add(ret,"returnWon"); }
       if (e.shotType==="ace")    add(srv,"aces");
-      if (e.shotType==="winner") add(srv,"winners");
-      if (e.shotType==="ue")     add(srv,"ue");
+      if (e.shotType==="winner") add(e.hitter,"winners");  // winner → chi ha colpito
+      if (e.shotType==="ue")     add(e.hitter,"ue");       // UE → chi ha sbagliato
     }
   });
   return { stats: stats, allSets: allSets };
@@ -691,15 +694,36 @@ function buildLogPanel(log, players, onBack) {
   entries.forEach(function(e, i) {
     var st = SHOT_TYPES[e.shotType];
     var setLabel = e.setN === 2 ? "STB" : ("S" + (e.setN+1));
+    // Point score at the moment of the shot (before the point was awarded)
+    var ptLabels = ["0","15","30","40"];
+    var p0 = e.points[0], p1 = e.points[1];
+    var ptStr;
+    if (e.setN === 2 || (e.isTiebreak)) {
+      ptStr = p0 + "-" + p1;
+    } else {
+      ptStr = (ptLabels[p0]||p0) + "-" + (ptLabels[p1]||p1);
+    }
     var row = el("div", { class:"logEntry" });
     row.appendChild(el("span", { text:(i+1)+".", style:{ color:"#4b5563", minWidth:"22px" } }));
-    row.appendChild(el("span", { text:"["+setLabel+" "+e.games[0]+"-"+e.games[1]+"]", style:{ color:"#6b7280" } }));
+    // [Set | Game score | Point score]
+    row.appendChild(el("span", {
+      text: "["+setLabel+" "+e.games[0]+"-"+e.games[1]+" | "+ptStr+"]",
+      style:{ color:"#6b7280" }
+    }));
     row.appendChild(el("span", { text:(e.isFirst?"1ª":"2ª")+"serv.", style:{ color:"#4b5563" } }));
+    // For UE: show who made the error, then who wins the point
+    // For winner/ace: show who hit it (= who wins)
+    var isUE = e.shotType === "ue";
+    var hitter = (e.hitter !== undefined) ? e.hitter : (isUE ? (1 - e.pointWinner) : e.pointWinner);
     var shotLabel = st ? st.label : e.shotType;
     if (e.stroke) shotLabel += " (" + e.stroke + ")";
+    row.appendChild(el("span", { text: players[hitter], style:{ color:"#9ca3af", fontWeight:"600" } }));
     row.appendChild(el("span", { text: shotLabel, style:{ color: st?st.color:"#aaa", fontWeight:"700" } }));
-    row.appendChild(el("span", { text:"→", style:{ color:"#9ca3af" } }));
-    row.appendChild(el("span", { text: players[e.pointWinner], style:{ color:"#e5e7eb", fontWeight:"600" } }));
+    if (isUE) {
+      // "G1 UNFORCED ERROR → punto a G2"
+      row.appendChild(el("span", { text:"→ pto", style:{ color:"#9ca3af" } }));
+      row.appendChild(el("span", { text: players[e.pointWinner], style:{ color:"#e5e7eb", fontWeight:"600" } }));
+    }
     list.appendChild(row);
   });
   wrap.appendChild(list);
@@ -920,10 +944,14 @@ function renderScore(root) {
         var shot = SHOT_TYPES[key];
         var serveOnly = key==="ace"||key==="fault"||key==="df";
         var disabled = serveOnly && pi !== state.server;
-        var btn = el("button", { class:"shotBtn" + (disabled?" disabled":""), text: shot.label,
+        var btn = el("button", { class:"shotBtn" + (disabled?" disabled":""),
           disabled: disabled,
           style: disabled ? {} : { borderColor: shot.color, color: shot.color },
           onClick: function() { if (!disabled) doShot(pi, key); } });
+        btn.appendChild(el("span", { text: shot.label, style:{ display:"block", fontWeight:"700" } }));
+        if (shot.sub && !disabled) {
+          btn.appendChild(el("span", { text: shot.sub, style:{ display:"block", fontSize:"10px", fontWeight:"400", opacity:"0.7", letterSpacing:"0", marginTop:"2px" } }));
+        }
         grid.appendChild(btn);
       });
       col.appendChild(grid);
