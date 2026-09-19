@@ -4,13 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Tennis Scorer</title>
-<link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Tennis Scorer">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
-<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
 <meta name="theme-color" content="#0a0a0a">
 <style>
   html, body { margin:0; padding:0; background:#0a0a0a; overscroll-behavior:none; }
@@ -520,37 +516,6 @@ function handleImportFile(file) {
 
 // ─── Renderers ──────────────────────────────────────────────────────────────
 function renderSetup(root) {
-  // ── Restore banner ──────────────────────────────────────────────────────
-  if (App._pendingRestore) {
-    var r = App._pendingRestore;
-    var banner = el("div", { style:{ width:"100%", maxWidth:"420px", margin:"16px auto 0", padding:"0 16px" } });
-    var card = el("div", { style:{ background:"#1a2e1a", border:"2px solid #4ade80", borderRadius:"10px", padding:"16px", display:"flex", flexDirection:"column", gap:"10px" } });
-    card.appendChild(el("div", { text:"⚡ Partita interrotta trovata", style:{ color:"#4ade80", fontWeight:"700", fontSize:"14px" } }));
-    card.appendChild(el("div", { text: r.players[0] + " vs " + r.players[1] + " · " + r.pts + " punti giocati", style:{ color:"#9ca3af", fontSize:"12px" } }));
-    var btns = el("div", { style:{ display:"flex", gap:"8px" } });
-    btns.appendChild(el("button", { style:{ flex:"1", background:"#4ade80", color:"#000", border:"none", borderRadius:"6px", padding:"10px 0", fontSize:"13px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" },
-      text:"▶ RIPRENDI",
-      onClick: function() {
-        App.history = r.snap.history;
-        App.setupDone = true;
-        App.screen = "score";
-        App._pendingRestore = null;
-        render();
-      }
-    }));
-    btns.appendChild(el("button", { style:{ flex:"1", background:"transparent", color:"#f87171", border:"1px solid #f87171", borderRadius:"6px", padding:"10px 0", fontSize:"13px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" },
-      text:"✕ SCARTA",
-      onClick: function() {
-        clearAutosave();
-        App._pendingRestore = null;
-        render();
-      }
-    }));
-    card.appendChild(btns);
-    banner.appendChild(card);
-    root.appendChild(banner);
-  }
-
   var box = el("div", { class: "setupBox" });
   box.appendChild(el("div", { class:"setupTitle", text:"🎾 TENNIS SCORER" }));
   box.appendChild(el("div", { class:"setupSubtitle", text:"Best of 3 · 3° set super tie-break" }));
@@ -1012,9 +977,47 @@ function renderStrokeOverlay(root) {
 }
 
 // ─── Master render ──────────────────────────────────────────────────────────
+function renderRestoreBanner(root) {
+  var r = App._pendingRestore;
+  root.style.justifyContent = "center";
+  var wrap = el("div", { style:{ width:"100%", maxWidth:"420px", padding:"40px 20px", display:"flex", flexDirection:"column", gap:"16px", alignItems:"center" } });
+  wrap.appendChild(el("div", { text:"🎾 TENNIS SCORER", style:{ fontSize:"22px", fontWeight:"900", color:"#4ade80", letterSpacing:"3px" } }));
+  var card = el("div", { style:{ width:"100%", background:"#1a2e1a", border:"2px solid #4ade80", borderRadius:"12px", padding:"20px", display:"flex", flexDirection:"column", gap:"12px" } });
+  card.appendChild(el("div", { text:"⚡ Partita interrotta trovata", style:{ color:"#4ade80", fontWeight:"700", fontSize:"15px" } }));
+  card.appendChild(el("div", { text: r.players[0] + " vs " + r.players[1], style:{ color:"#e5e7eb", fontWeight:"700", fontSize:"18px" } }));
+  card.appendChild(el("div", { text: r.pts + " punti giocati", style:{ color:"#9ca3af", fontSize:"12px" } }));
+  var btns = el("div", { style:{ display:"flex", gap:"8px" } });
+  btns.appendChild(el("button", {
+    style:{ flex:"1", background:"#4ade80", color:"#000", border:"none", borderRadius:"8px", padding:"14px 0", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px" },
+    text:"▶ RIPRENDI",
+    onClick: function() {
+      App.history = r.snap.history;
+      App.setupDone = true;
+      App.screen = "score";
+      App._pendingRestore = null;
+      render();
+    }
+  }));
+  btns.appendChild(el("button", {
+    style:{ flex:"1", background:"transparent", color:"#f87171", border:"2px solid #f87171", borderRadius:"8px", padding:"14px 0", fontSize:"14px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" },
+    text:"✕ SCARTA",
+    onClick: function() {
+      clearAutosave();
+      App._pendingRestore = null;
+      render();
+    }
+  }));
+  card.appendChild(btns);
+  wrap.appendChild(card);
+  root.appendChild(wrap);
+}
+
 function render() {
   var root = document.getElementById("app");
   clear(root);
+
+  // Restore check: always shown first, above everything else
+  if (App._pendingRestore) { renderRestoreBanner(root); maybeToast(root); return; }
 
   if (App.viewingMatch) { renderViewer(root); return; }
   if (!App.setupDone) { renderSetup(root); maybeToast(root); return; }
@@ -1050,19 +1053,6 @@ document.getElementById("importFileInput").addEventListener("change", function(e
 });
 
 render();
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function() {
-    navigator.serviceWorker.register("service-worker.js").then(function(reg) {
-      reg.addEventListener("updatefound", function() {
-        var nw = reg.installing;
-        if (!nw) return;
-        nw.addEventListener("statechange", function() {
-          if (nw.state==="installed" && navigator.serviceWorker.controller) showToast("🔄 Nuova versione — ricarica l'app");
-        });
-      });
-    });
-  });
-}
 </script>
 </body>
 </html>
