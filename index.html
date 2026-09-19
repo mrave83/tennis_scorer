@@ -606,9 +606,19 @@ function buildStatsPanel(log, players, onBack, selState) {
   var tabs = el("div", { class:"setTabs" });
   computed.allSets.forEach(function(sl) {
     var label = sl === "total" ? "TOTALE" : ("SET " + (sl+1));
-    var btn = el("button", { class:"setTabBtn" + (sel===sl ? " active":""), text:label,
-      onClick: function() { selState.sel = sl; renderStatsBody(); } });
-    tabs.appendChild(btn);
+    // IIFE to capture sl correctly in closure (avoids JS var-in-loop bug)
+    (function(capturedSl) {
+      var btn = el("button", { class:"setTabBtn" + (sel===capturedSl ? " active":""), text:label,
+        onClick: function() {
+          selState.sel = capturedSl;
+          Array.prototype.forEach.call(tabs.children, function(b, idx) {
+            b.className = "setTabBtn" + (computed.allSets[idx] === capturedSl ? " active" : "");
+          });
+          renderStatsBody();
+        }
+      });
+      tabs.appendChild(btn);
+    })(sl);
   });
   wrap.appendChild(tabs);
 
@@ -929,7 +939,7 @@ function renderScore(root) {
   ]);
   sb.appendChild(statusBar);
 
-  if (state.faultPending) sb.appendChild(el("div", { class:"faultBanner", text:"⚠️ PRIMA FALTA — SECONDO SERVIZIO" }));
+  if (state.faultPending) sb.appendChild(el("div", { class:"faultBanner", text:"⚠️ PRIMO FALLO — SECONDO SERVIZIO" }));
   if (state.matchOver) sb.appendChild(el("div", { class:"matchOverBanner", text:"🏆 " + state.players[state.matchWinner] + " vince!" }));
 
   root.appendChild(sb);
