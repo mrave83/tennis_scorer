@@ -4,20 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Tennis Scorer</title>
-
-<!-- PWA manifest (enables install on Android + most browsers) -->
 <link rel="manifest" href="manifest.json">
-
-<!-- iOS-specific PWA support -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Tennis Scorer">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-
-<!-- Generic icons -->
 <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
-
 <meta name="theme-color" content="#0a0a0a">
 <style>
   html, body { margin:0; padding:0; background:#0a0a0a; overscroll-behavior:none; }
@@ -327,6 +320,30 @@ function persistMatches(list) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(list)); } catch (e) {}
 }
 
+// ─── Autosave: salva lo stato corrente dopo ogni punto ─────────────────────
+var AUTOSAVE_KEY = "tennis_current_match_v2";
+function autosave() {
+  if (!App.setupDone) return;
+  try {
+    var snap = { history: App.history, screen: "score" };
+    localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snap));
+  } catch (e) {}
+}
+function clearAutosave() {
+  try { localStorage.removeItem(AUTOSAVE_KEY); } catch (e) {}
+}
+function loadAutosave() {
+  try {
+    var raw = localStorage.getItem(AUTOSAVE_KEY);
+    if (!raw) return null;
+    var snap = JSON.parse(raw);
+    if (!snap.history || !snap.history.length) return null;
+    var lastState = snap.history[snap.history.length - 1];
+    if (!lastState.log || lastState.log.filter(function(e){ return e.pointWinner !== null; }).length === 0) return null;
+    return snap;
+  } catch (e) { return null; }
+}
+
 // ─── DOM helpers ──────────────────────────────────────────────────────────────
 function el(tag, opts, children) {
   var e = document.createElement(tag);
@@ -370,6 +387,15 @@ var App = {
 };
 App.saved = loadSavedMatches();
 
+// ─── Restore autosaved match on startup ───────────────────────────────────
+(function() {
+  var snap = loadAutosave();
+  if (!snap) return;
+  var lastState = snap.history[snap.history.length - 1];
+  var pts = lastState.log.filter(function(e){ return e.pointWinner !== null; }).length;
+  App._pendingRestore = { snap: snap, pts: pts, players: lastState.players };
+})();
+
 function currentState() { return App.history[App.history.length - 1]; }
 
 function doShot(actor, shotType) {
@@ -385,6 +411,7 @@ function commitShot(actor, shotType, stroke) {
   var next = scorePoint(currentState(), actor, shotType, stroke);
   App.history.push(next);
   App.pendingShot = null;
+  autosave();
   render();
 }
 function cancelPendingShot() {
@@ -393,13 +420,16 @@ function cancelPendingShot() {
 }
 function doUndo() {
   if (App.history.length > 1) App.history.pop();
+  autosave();
   render();
 }
 function doReset() {
+  clearAutosave();
   App.setupDone = false; App.history = [mkState()]; App.screen = "score"; App.saveMsgUntil = 0;
   render();
 }
 function doStart() {
+  clearAutosave();
   App.history = [mkState(App.names.slice(), App.firstServer, App.format, App.advancedSetup)];
   App.setupDone = true; App.screen = "score"; App.saveMsgUntil = 0;
   render();
@@ -490,6 +520,37 @@ function handleImportFile(file) {
 
 // ─── Renderers ──────────────────────────────────────────────────────────────
 function renderSetup(root) {
+  // ── Restore banner ──────────────────────────────────────────────────────
+  if (App._pendingRestore) {
+    var r = App._pendingRestore;
+    var banner = el("div", { style:{ width:"100%", maxWidth:"420px", margin:"16px auto 0", padding:"0 16px" } });
+    var card = el("div", { style:{ background:"#1a2e1a", border:"2px solid #4ade80", borderRadius:"10px", padding:"16px", display:"flex", flexDirection:"column", gap:"10px" } });
+    card.appendChild(el("div", { text:"⚡ Partita interrotta trovata", style:{ color:"#4ade80", fontWeight:"700", fontSize:"14px" } }));
+    card.appendChild(el("div", { text: r.players[0] + " vs " + r.players[1] + " · " + r.pts + " punti giocati", style:{ color:"#9ca3af", fontSize:"12px" } }));
+    var btns = el("div", { style:{ display:"flex", gap:"8px" } });
+    btns.appendChild(el("button", { style:{ flex:"1", background:"#4ade80", color:"#000", border:"none", borderRadius:"6px", padding:"10px 0", fontSize:"13px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" },
+      text:"▶ RIPRENDI",
+      onClick: function() {
+        App.history = r.snap.history;
+        App.setupDone = true;
+        App.screen = "score";
+        App._pendingRestore = null;
+        render();
+      }
+    }));
+    btns.appendChild(el("button", { style:{ flex:"1", background:"transparent", color:"#f87171", border:"1px solid #f87171", borderRadius:"6px", padding:"10px 0", fontSize:"13px", fontWeight:"700", cursor:"pointer", fontFamily:"inherit" },
+      text:"✕ SCARTA",
+      onClick: function() {
+        clearAutosave();
+        App._pendingRestore = null;
+        render();
+      }
+    }));
+    card.appendChild(btns);
+    banner.appendChild(card);
+    root.appendChild(banner);
+  }
+
   var box = el("div", { class: "setupBox" });
   box.appendChild(el("div", { class:"setupTitle", text:"🎾 TENNIS SCORER" }));
   box.appendChild(el("div", { class:"setupSubtitle", text:"Best of 3 · 3° set super tie-break" }));
@@ -989,23 +1050,16 @@ document.getElementById("importFileInput").addEventListener("change", function(e
 });
 
 render();
-
-// ─── Service Worker registration (enables offline + installability) ────────
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", function () {
-    navigator.serviceWorker.register("service-worker.js").then(function (reg) {
-      // Listen for updates and notify the user
-      reg.addEventListener("updatefound", function () {
-        var newWorker = reg.installing;
-        if (!newWorker) return;
-        newWorker.addEventListener("statechange", function () {
-          if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-            showToast("🔄 Nuova versione disponibile — ricarica l'app");
-          }
+  window.addEventListener("load", function() {
+    navigator.serviceWorker.register("service-worker.js").then(function(reg) {
+      reg.addEventListener("updatefound", function() {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", function() {
+          if (nw.state==="installed" && navigator.serviceWorker.controller) showToast("🔄 Nuova versione — ricarica l'app");
         });
       });
-    }).catch(function (err) {
-      console.warn("Service worker registration failed:", err);
     });
   });
 }
